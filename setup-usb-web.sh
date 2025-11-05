@@ -14,7 +14,7 @@ set -euo pipefail
 TARGET_USER="${TARGET_USER:-lucid}"
 USB_DOCROOT="/media/usb/www"
 DEFAULT_DOCROOT="/var/www/html"
-USB_KIOSK_CONFIG="/media/usb/KIOSK_CONFIG"
+USB_KIOSK_CONFIG="/media/usb/KIOSK_CONFIG.txt"
 
 SHELL_HELPER="/usr/local/bin/lighttpd-usbroot.sh"
 LIGHTTPD_CONF_DIR="/etc/lighttpd"
@@ -257,6 +257,17 @@ else
       print "      <action name=\"WarpCursor\" x=\"-1\" y=\"-1\" />"
       print "    </keybind>"
       print "  </keyboard>"
+    }
+    { print }
+  ' "${RC_XML}" > "${RC_XML}.tmp" && mv "${RC_XML}.tmp" "${RC_XML}"
+fi
+
+# Check if touch configuration exists
+if ! grep -q '<touch' "${RC_XML}"; then
+  # Add touch configuration before closing </openbox_config>
+  awk '
+    /<\/openbox_config>/ {
+      print "  <touch mapToOutput=\"HDMI-A-1\" mouseEmulation=\"yes\"/>"
     }
     { print }
   ' "${RC_XML}" > "${RC_XML}.tmp" && mv "${RC_XML}.tmp" "${RC_XML}"
