@@ -45,7 +45,7 @@ if dpkg-query -W -f='${Status}' usbmount 2>/dev/null | grep -q "install ok insta
   echo "[2/11] usbmount already installed."
 else
   echo "[2/11] Building usbmount from source..."
-  apt-get install -y git debhelper build-essential
+  apt-get install -y git debhelper build-essential lockfile-progs liblockfile1 liblockfile-bin
 
   cd /tmp
   rm -rf usbmount || true
@@ -220,18 +220,47 @@ TARGET_HOME=$(eval echo "~${TARGET_USER}")
 LABWC_CONFIG_DIR="${TARGET_HOME}/.config/labwc"
 mkdir -p "${LABWC_CONFIG_DIR}"
 
-cat > "${LABWC_CONFIG_DIR}/rc.xml" <<'XML'
+RC_XML="${LABWC_CONFIG_DIR}/rc.xml"
+
+# Create rc.xml if it doesn't exist
+if [ ! -f "${RC_XML}" ]; then
+  cat > "${RC_XML}" <<'XML'
 <?xml version="1.0"?>
 <openbox_config xmlns="http://openbox.org/3.4/rc">
-  <!-- Adds the Shortcut Alt-Logo-h to hide the Cursor -->
-  <keyboard>
-    <keybind key="A-W-h">
-      <action name="HideCursor" />
-      <action name="WarpCursor" x="-1" y="-1" />
-    </keybind>
-  </keyboard>
 </openbox_config>
 XML
+fi
+
+# Check if keyboard section exists
+if grep -q "<keyboard>" "${RC_XML}"; then
+  # Keyboard section exists, check if keybind already exists
+  if ! grep -q 'keybind key="A-W-h"' "${RC_XML}"; then
+    # Insert keybind before closing </keyboard> using awk
+    awk '
+      /<\/keyboard>/ {
+        print "    <keybind key=\"A-W-h\">"
+        print "      <action name=\"HideCursor\" />"
+        print "      <action name=\"WarpCursor\" x=\"-1\" y=\"-1\" />"
+        print "    </keybind>"
+      }
+      { print }
+    ' "${RC_XML}" > "${RC_XML}.tmp" && mv "${RC_XML}.tmp" "${RC_XML}"
+  fi
+else
+  # Keyboard section doesn't exist, add it before closing </openbox_config>
+  awk '
+    /<\/openbox_config>/ {
+      print "  <!-- Adds the Shortcut Alt-Logo-h to hide the Cursor -->"
+      print "  <keyboard>"
+      print "    <keybind key=\"A-W-h\">"
+      print "      <action name=\"HideCursor\" />"
+      print "      <action name=\"WarpCursor\" x=\"-1\" y=\"-1\" />"
+      print "    </keybind>"
+      print "  </keyboard>"
+    }
+    { print }
+  ' "${RC_XML}" > "${RC_XML}.tmp" && mv "${RC_XML}.tmp" "${RC_XML}"
+fi
 
 chown -R "${TARGET_USER}:${TARGET_USER}" "${LABWC_CONFIG_DIR}"
 
@@ -241,15 +270,15 @@ if [ -f "${SYSTEM_LABWC_AUTOSTART}" ]; then
   # Backup original
   cp "${SYSTEM_LABWC_AUTOSTART}" "${SYSTEM_LABWC_AUTOSTART}.bak"
   
-  # Disable desktop components, keep kanshi enabled
-  sed -i 's@^\(/usr/bin/lwrespawn /usr/bin/pcmanfm --desktop --profile LXDE-pi &\)@#\1@' "${SYSTEM_LABWC_AUTOSTART}"
-  sed -i 's@^\(/usr/bin/lwrespawn /usr/bin/wf-panel-pi &\)@#\1@' "${SYSTEM_LABWC_AUTOSTART}"
-  sed -i 's@^\(/usr/bin/lxsession-xdg-autostart\)@#\1@' "${SYSTEM_LABWC_AUTOSTART}"
+  # Remove any existing kanshi lines (commented or not) to avoid duplicates
+  sed -i '/\/usr\/bin\/lwrespawn \/usr\/bin\/kanshi &/d' "${SYSTEM_LABWC_AUTOSTART}"
+  sed -i '/#.*\/usr\/bin\/lwrespawn \/usr\/bin\/kanshi &/d' "${SYSTEM_LABWC_AUTOSTART}"
   
-  # Ensure kanshi is enabled and configured with the exact line
-  if ! grep -q "^/usr/bin/lwrespawn /usr/bin/kanshi &$" "${SYSTEM_LABWC_AUTOSTART}"; then
-    echo "/usr/bin/lwrespawn /usr/bin/kanshi &" >> "${SYSTEM_LABWC_AUTOSTART}"
-  fi
+  # Comment out all existing non-comment, non-empty lines (handles leading whitespace)
+  sed -i 's@^[[:space:]]*[^#[:space:]]@#&@' "${SYSTEM_LABWC_AUTOSTART}"
+  
+  # Add kanshi line
+  echo "/usr/bin/lwrespawn /usr/bin/kanshi &" >> "${SYSTEM_LABWC_AUTOSTART}"
   
   echo "Desktop components disabled."
 else
@@ -371,34 +400,50 @@ mkdir -p "${PLYMOUTH_THEME_DIR}"
 
 echo "Downloading boot splash image..."
 DOWNLOAD_SUCCESS=false
+SPLASH_TEMP=$(mktemp)
 
 if command -v curl > /dev/null 2>&1; then
-  if curl -L -f -o "${PLYMOUTH_SPLASH}" "${BOOT_SPLASH_URL}" 2>/dev/null; then
+  if curl -L -f -o "${SPLASH_TEMP}" "${BOOT_SPLASH_URL}" 2>/dev/null; then
     DOWNLOAD_SUCCESS=true
   fi
 elif command -v wget > /dev/null 2>&1; then
-  if wget -q -O "${PLYMOUTH_SPLASH}" "${BOOT_SPLASH_URL}" 2>/dev/null; then
+  if wget -q -O "${SPLASH_TEMP}" "${BOOT_SPLASH_URL}" 2>/dev/null; then
     DOWNLOAD_SUCCESS=true
   fi
 else
   echo "Installing curl..."
   apt-get install -y curl
-  if curl -L -f -o "${PLYMOUTH_SPLASH}" "${BOOT_SPLASH_URL}" 2>/dev/null; then
+  if curl -L -f -o "${SPLASH_TEMP}" "${BOOT_SPLASH_URL}" 2>/dev/null; then
     DOWNLOAD_SUCCESS=true
   fi
 fi
 
 if [ "${DOWNLOAD_SUCCESS}" = false ]; then
   echo "Warning: Failed to download boot splash image. Skipping..."
+  rm -f "${SPLASH_TEMP}"
 else
-  echo "Boot splash image downloaded successfully."
+  # Compare with existing splash file
+  NEEDS_UPDATE=true
+  if [ -f "${PLYMOUTH_SPLASH}" ]; then
+    if cmp -s "${SPLASH_TEMP}" "${PLYMOUTH_SPLASH}"; then
+      echo "Boot splash image unchanged, skipping update."
+      NEEDS_UPDATE=false
+    fi
+  fi
   
-  # Set Plymouth theme and rebuild initrd
-  echo "Setting Plymouth theme..."
-  plymouth-set-default-theme pix || true
-  plymouth-set-default-theme --rebuild-initrd pix || {
-    echo "Warning: Failed to rebuild initrd. Boot splash may not work."
-  }
+  if [ "${NEEDS_UPDATE}" = true ]; then
+    echo "Boot splash image downloaded successfully."
+    mv "${SPLASH_TEMP}" "${PLYMOUTH_SPLASH}"
+    
+    # Set Plymouth theme and rebuild initrd
+    echo "Setting Plymouth theme..."
+    plymouth-set-default-theme pix || true
+    plymouth-set-default-theme --rebuild-initrd pix || {
+      echo "Warning: Failed to rebuild initrd. Boot splash may not work."
+    }
+  else
+    rm -f "${SPLASH_TEMP}"
+  fi
 fi
 
 # ========================================
