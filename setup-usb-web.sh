@@ -31,20 +31,20 @@ echo " USB Web Kiosk Setup"
 echo "======================================="
 
 # ========================================
-# [1/10] Install Base Packages
+# [1/11] Install Base Packages
 # ========================================
-echo "[1/10] Installing base packages..."
+echo "[1/11] Installing base packages..."
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -y
 apt-get install -y lighttpd acl exfatprogs exfat-fuse wtype
 
 # ========================================
-# [2/10] Install usbmount
+# [2/11] Install usbmount
 # ========================================
 if dpkg-query -W -f='${Status}' usbmount 2>/dev/null | grep -q "install ok installed"; then
-  echo "[2/10] usbmount already installed."
+  echo "[2/11] usbmount already installed."
 else
-  echo "[2/10] Building usbmount from source..."
+  echo "[2/11] Building usbmount from source..."
   apt-get install -y git debhelper build-essential
 
   cd /tmp
@@ -62,9 +62,9 @@ else
 fi
 
 # ========================================
-# [3/10] Create Lighttpd Docroot Resolver
+# [3/11] Create Lighttpd Docroot Resolver
 # ========================================
-echo "[3/10] Creating docroot resolver script..."
+echo "[3/11] Creating docroot resolver script..."
 
 cat > "${SHELL_HELPER}" <<'SH'
 #!/usr/bin/env bash
@@ -81,9 +81,9 @@ chmod +x "${SHELL_HELPER}"
 sed -i 's/\r$//' "${SHELL_HELPER}"
 
 # ========================================
-# [4/10] Configure Lighttpd
+# [4/11] Configure Lighttpd
 # ========================================
-echo "[4/10] Configuring Lighttpd..."
+echo "[4/11] Configuring Lighttpd..."
 
 # Remove any old/conflicting configurations
 rm -f "${LIGHTTPD_CONF_DIR}/conf-available/99-usb-docroot.conf"
@@ -107,9 +107,9 @@ lighttpd -tt -f "${LIGHTTPD_CONF_DIR}/lighttpd.conf"
 systemctl reload lighttpd || systemctl restart lighttpd
 
 # ========================================
-# [5/10] Create Default Index Page
+# [5/11] Create Default Index Page
 # ========================================
-echo "[5/10] Creating default index page..."
+echo "[5/11] Creating default index page..."
 mkdir -p "${DEFAULT_DOCROOT}"
 if [ ! -f "${DEFAULT_DOCROOT}/index.html" ]; then
   cat > "${DEFAULT_DOCROOT}/index.html" <<'HTML'
@@ -131,9 +131,9 @@ HTML
 fi
 
 # ========================================
-# [6/10] Configure Permissions
+# [6/11] Configure Permissions
 # ========================================
-echo "[6/10] Configuring permissions..."
+echo "[6/11] Configuring permissions..."
 
 usermod -aG www-data "${TARGET_USER}" || true
 chgrp -R www-data /var/www
@@ -143,9 +143,9 @@ setfacl -R -m g:www-data:rwx /var/www || true
 setfacl -d -m g:www-data:rwx /var/www || true
 
 # ========================================
-# [7/10] Configure usbmount & USB Hooks
+# [7/11] Configure usbmount & USB Hooks
 # ========================================
-echo "[7/10] Configuring USB mount hooks..."
+echo "[7/11] Configuring USB mount hooks..."
 # Configure usbmount filesystems and mount options
 sed -i -E 's@^#?[[:space:]]*FILESYSTEMS=.*@FILESYSTEMS="vfat ext2 ext3 ext4 ntfs exfat"@' "${USBMOUNT_CONF}"
 sed -i -E 's@^MOUNTOPTIONS=.*@MOUNTOPTIONS="sync,noexec,nodev,noatime,uid=33,gid=33,umask=002"@' "${USBMOUNT_CONF}" \
@@ -182,9 +182,9 @@ udevadm control --reload-rules || true
 udevadm trigger || true
 
 # ========================================
-# [8/10] Configure Labwc & Desktop
+# [8/11] Configure Labwc & Desktop
 # ========================================
-echo "[8/10] Configuring labwc window manager..."
+echo "[8/11] Configuring labwc window manager..."
 
 TARGET_HOME=$(eval echo "~${TARGET_USER}")
 LABWC_CONFIG_DIR="${TARGET_HOME}/.config/labwc"
@@ -227,9 +227,9 @@ else
 fi
 
 # ========================================
-# [9/10] Configure Chromium Kiosk
+# [9/11] Configure Chromium Kiosk
 # ========================================
-echo "[9/10] Configuring Chromium kiosk..."
+echo "[9/11] Configuring Chromium kiosk..."
 
 cat > "${LABWC_CONFIG_DIR}/autostart" <<'AUTOSTART'
 # Chromium kiosk mode
@@ -249,9 +249,9 @@ chown "${TARGET_USER}:${TARGET_USER}" "${LABWC_CONFIG_DIR}/autostart"
 chmod +x "${LABWC_CONFIG_DIR}/autostart"
 
 # ========================================
-# [10/10] Configure Display Rotation
+# [10/11] Configure Display Rotation
 # ========================================
-echo "[10/10] Configuring display rotation..."
+echo "[10/11] Configuring display rotation..."
 
 KANSHI_CONFIG_DIR="${TARGET_HOME}/.config/kanshi"
 mkdir -p "${KANSHI_CONFIG_DIR}"
@@ -322,6 +322,56 @@ chmod +x "${KANSHI_HELPER}"
 "${KANSHI_HELPER}" "${TARGET_USER}"
 
 # ========================================
+# [11/11] Configure Boot Splash Screen
+# ========================================
+echo "[11/11] Configuring boot splash screen..."
+
+# Install plymouth if not present
+if ! command -v plymouth > /dev/null 2>&1; then
+  echo "Installing plymouth..."
+  apt-get install -y plymouth plymouth-themes
+fi
+
+# Download boot splash image
+BOOT_SPLASH_URL="https://raw.githubusercontent.com/wearelucid/rpi-usb-webkiosk/refs/heads/main/boot.png"
+PLYMOUTH_THEME_DIR="/usr/share/plymouth/themes/pix"
+PLYMOUTH_SPLASH="${PLYMOUTH_THEME_DIR}/splash.png"
+
+mkdir -p "${PLYMOUTH_THEME_DIR}"
+
+echo "Downloading boot splash image..."
+DOWNLOAD_SUCCESS=false
+
+if command -v curl > /dev/null 2>&1; then
+  if curl -L -f -o "${PLYMOUTH_SPLASH}" "${BOOT_SPLASH_URL}" 2>/dev/null; then
+    DOWNLOAD_SUCCESS=true
+  fi
+elif command -v wget > /dev/null 2>&1; then
+  if wget -q -O "${PLYMOUTH_SPLASH}" "${BOOT_SPLASH_URL}" 2>/dev/null; then
+    DOWNLOAD_SUCCESS=true
+  fi
+else
+  echo "Installing curl..."
+  apt-get install -y curl
+  if curl -L -f -o "${PLYMOUTH_SPLASH}" "${BOOT_SPLASH_URL}" 2>/dev/null; then
+    DOWNLOAD_SUCCESS=true
+  fi
+fi
+
+if [ "${DOWNLOAD_SUCCESS}" = false ]; then
+  echo "Warning: Failed to download boot splash image. Skipping..."
+else
+  echo "Boot splash image downloaded successfully."
+  
+  # Set Plymouth theme and rebuild initrd
+  echo "Setting Plymouth theme..."
+  plymouth-set-default-theme pix || true
+  plymouth-set-default-theme --rebuild-initrd pix || {
+    echo "Warning: Failed to rebuild initrd. Boot splash may not work."
+  }
+fi
+
+# ========================================
 # Setup Complete
 # ========================================
 echo ""
@@ -339,6 +389,7 @@ echo "  • Chromium kiosk (localhost)"
 echo "  • Auto cursor hide (Alt+Logo+H)"
 echo "  • Dynamic rotation via USB"
 echo "  • USB hotswap auto-reload"
+echo "  • Custom boot splash screen"
 echo ""
 echo "USB Configuration:"
 echo "  Create ${USB_KIOSK_CONFIG} with:"
