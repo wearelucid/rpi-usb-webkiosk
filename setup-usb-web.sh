@@ -112,21 +112,51 @@ systemctl reload lighttpd || systemctl restart lighttpd
 echo "[5/11] Creating default index page..."
 mkdir -p "${DEFAULT_DOCROOT}"
 if [ ! -f "${DEFAULT_DOCROOT}/index.html" ]; then
-  cat > "${DEFAULT_DOCROOT}/index.html" <<'HTML'
+  DEFAULT_INDEX_URL="https://raw.githubusercontent.com/wearelucid/rpi-usb-webkiosk/refs/heads/main/index.html"
+  
+  echo "Downloading default index page..."
+  DOWNLOAD_SUCCESS=false
+  
+  if command -v curl > /dev/null 2>&1; then
+    if curl -L -f -o "${DEFAULT_DOCROOT}/index.html" "${DEFAULT_INDEX_URL}" 2>/dev/null; then
+      DOWNLOAD_SUCCESS=true
+    fi
+  elif command -v wget > /dev/null 2>&1; then
+    if wget -q -O "${DEFAULT_DOCROOT}/index.html" "${DEFAULT_INDEX_URL}" 2>/dev/null; then
+      DOWNLOAD_SUCCESS=true
+    fi
+  else
+    echo "Installing curl..."
+    apt-get install -y curl
+    if curl -L -f -o "${DEFAULT_DOCROOT}/index.html" "${DEFAULT_INDEX_URL}" 2>/dev/null; then
+      DOWNLOAD_SUCCESS=true
+    fi
+  fi
+  
+  if [ "${DOWNLOAD_SUCCESS}" = false ]; then
+    echo "Warning: Failed to download default index page. Creating minimal fallback..."
+    cat > "${DEFAULT_DOCROOT}/index.html" <<'HTML'
 <!DOCTYPE html>
-<html lang="en"><head><meta charset="UTF-8"/><meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-<title>No USB Content</title>
-<style>
-  body{margin:0;padding:0;font-family:sans-serif;background:#111;color:#eee;display:flex;flex-direction:column;justify-content:center;align-items:center;height:100vh;text-align:center}
-  h1{font-size:2.2rem;margin:.2rem 0}
-  p{opacity:.85;max-width:420px}
-  code{background:rgba(255,255,255,.12);padding:.2rem .4rem;border-radius:4px}
-</style></head>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>No USB Content</title>
+  <style>
+    body{margin:0;padding:0;font-family:sans-serif;background:#111;color:#eee;display:flex;flex-direction:column;justify-content:center;align-items:center;height:100vh;text-align:center}
+    h1{font-size:2.2rem;margin:.2rem 0}
+    p{opacity:.85;max-width:420px}
+    code{background:rgba(255,255,255,.12);padding:.2rem .4rem;border-radius:4px}
+  </style>
+</head>
 <body>
   <h1>No USB detected</h1>
   <p>Insert a USB drive and place your website files inside:<br><br><code>/www</code></p>
-</body></html>
+</body>
+</html>
 HTML
+  fi
+  
   chown www-data:www-data "${DEFAULT_DOCROOT}/index.html"
 fi
 
