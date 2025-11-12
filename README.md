@@ -7,6 +7,7 @@ Automated setup script for configuring a Raspberry Pi as a web kiosk with USB ho
 - **Dynamic Web Server**: Serves content from USB (`/media/usb/www`) when present, falls back to `/var/www/html`
 - **Chromium Kiosk Mode**: Fullscreen browser that auto-starts on boot
 - **Dynamic Display Rotation**: Configure rotation via USB config file (0°, 90°, 180°, 270°)
+- **Touch Mouse Emulation**: Configure touch-to-mouse emulation via USB config file
 - **Auto Cursor Hide**: Cursor automatically hides after startup
 - **USB Hotswap**: Automatically reloads content when USB drives are inserted/removed
 - **Custom Boot Splash**: Custom boot screen image
@@ -41,10 +42,10 @@ curl -sL https://raw.githubusercontent.com/wearelucid/rpi-usb-webkiosk/refs/head
 
 ### USB Configuration File
 
-Create a `KIOSK_CONFIG` file on your USB drive to customize behavior:
+Create a `KIOSK_CONFIG.txt` file on your USB drive to customize behavior:
 
 ```
-/media/usb/KIOSK_CONFIG
+/media/usb/KIOSK_CONFIG.txt
 ```
 
 **Display Rotation:**
@@ -57,11 +58,24 @@ ROTATION=90
 
 Valid values: `0` (landscape), `90` (portrait), `180` (upside down), `270` (portrait flipped)
 
+**Touch Mouse Emulation:**
+
+Add this line to enable or disable touch-to-mouse emulation:
+
+```
+MOUSE_EMULATION=yes
+```
+
+Valid values: `yes` (enabled, default), `no` (disabled)
+
 **Example:**
 
 ```bash
-# On your USB drive, create /KIOSK_CONFIG with:
-echo "ROTATION=90" > /media/usb/KIOSK_CONFIG
+# On your USB drive, create /KIOSK_CONFIG.txt with:
+cat > /media/usb/KIOSK_CONFIG.txt <<EOF
+ROTATION=90
+MOUSE_EMULATION=yes
+EOF
 ```
 
 ## USB Drive Setup
@@ -77,7 +91,7 @@ USB Drive/
 │   ├── css/
 │   ├── js/
 │   └── images/
-└── KIOSK_CONFIG
+└── KIOSK_CONFIG.txt
 ```
 
 The web server will automatically serve from `/media/usb/www` when the USB is inserted.
@@ -91,12 +105,3 @@ After installation, reboot to activate all features:
 ```bash
 sudo reboot
 ```
-
-## Files Created
-
-- `/usr/local/bin/lighttpd-usbroot.sh` - Document root resolver
-- `/usr/local/bin/update-kanshi-rotation.sh` - Rotation helper script
-- `~/.config/labwc/rc.xml` - Window manager config
-- `~/.config/labwc/autostart` - Autostart applications
-- `~/.config/kanshi/config` - Display rotation config
-- `/usr/share/plymouth/themes/pix/splash.png` - Boot splash image

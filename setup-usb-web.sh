@@ -25,6 +25,7 @@ MOUNT_HOOK_DIR="/etc/usbmount/mount.d"
 UMOUNT_HOOK_DIR="/etc/usbmount/umount.d"
 
 KANSHI_HELPER="/usr/local/bin/update-kanshi-rotation.sh"
+LABWC_TOUCH_HELPER="/usr/local/bin/update-labwc-touch.sh"
 
 echo "======================================="
 echo " USB Web Kiosk Setup"
@@ -192,6 +193,9 @@ systemctl reload lighttpd || true
 
 # Update display rotation based on USB config
 /usr/local/bin/update-kanshi-rotation.sh ${TARGET_USER} || true
+
+# Update touch/mouse emulation based on USB config
+/usr/local/bin/update-labwc-touch.sh ${TARGET_USER} || true
 SH
 
 cat > "${UMOUNT_HOOK_DIR}/20-reload-lighttpd" <<SH
@@ -202,6 +206,9 @@ systemctl reload lighttpd || true
 
 # Reset display rotation to default (0) when USB is removed
 /usr/local/bin/update-kanshi-rotation.sh ${TARGET_USER} || true
+
+# Reset touch/mouse emulation to default (yes) when USB is removed
+/usr/local/bin/update-labwc-touch.sh ${TARGET_USER} || true
 SH
 
 chmod +x "${MOUNT_HOOK_DIR}/20-reload-lighttpd"
@@ -262,16 +269,7 @@ else
   ' "${RC_XML}" > "${RC_XML}.tmp" && mv "${RC_XML}.tmp" "${RC_XML}"
 fi
 
-# Check if touch configuration exists
-if ! grep -q '<touch' "${RC_XML}"; then
-  # Add touch configuration before closing </openbox_config>
-  awk '
-    /<\/openbox_config>/ {
-      print "  <touch mapToOutput=\"HDMI-A-1\" mouseEmulation=\"yes\"/>"
-    }
-    { print }
-  ' "${RC_XML}" > "${RC_XML}.tmp" && mv "${RC_XML}.tmp" "${RC_XML}"
-fi
+# Touch configuration will be set up by the helper script
 
 chown -R "${TARGET_USER}:${TARGET_USER}" "${LABWC_CONFIG_DIR}"
 
@@ -327,28 +325,28 @@ KANSHI_CONFIG_DIR="${TARGET_HOME}/.config/kanshi"
 mkdir -p "${KANSHI_CONFIG_DIR}"
 
 # Create rotation helper script
-cat > "${KANSHI_HELPER}" <<'HELPER'
+cat > "${KANSHI_HELPER}" <<HELPER
 #!/usr/bin/env bash
 set -euo pipefail
 
-TARGET_USER="${1:-lucid}"
-TARGET_HOME=$(eval echo "~${TARGET_USER}")
-KANSHI_CONFIG="${TARGET_HOME}/.config/kanshi/config"
-USB_CONFIG="/media/usb/KIOSK_CONFIG"
+TARGET_USER="\${1:-lucid}"
+TARGET_HOME=\$(eval echo "~\${TARGET_USER}")
+KANSHI_CONFIG="\${TARGET_HOME}/.config/kanshi/config"
+USB_CONFIG="${USB_KIOSK_CONFIG}"
 
 # Default rotation
 ROTATION=0
 
 # Read rotation from USB config if it exists
-if [ -f "${USB_CONFIG}" ]; then
+if [ -f "\${USB_CONFIG}" ]; then
   # Source the config file safely
-  if grep -q "^ROTATION=" "${USB_CONFIG}"; then
-    ROTATION=$(grep "^ROTATION=" "${USB_CONFIG}" | head -n1 | cut -d'=' -f2 | tr -d ' "'"'"'')
+  if grep -q "^ROTATION=" "\${USB_CONFIG}"; then
+    ROTATION=\$(grep "^ROTATION=" "\${USB_CONFIG}" | head -n1 | cut -d'=' -f2 | tr -d ' "'"'"'')
   fi
 fi
 
 # Validate rotation value (0, 90, 180, 270) and map to kanshi transform
-case "${ROTATION}" in
+case "\${ROTATION}" in
   0)
     TRANSFORM="normal"
     ;;
@@ -362,23 +360,23 @@ case "${ROTATION}" in
     TRANSFORM="270"
     ;;
   *)
-    echo "Warning: Invalid rotation value '${ROTATION}', using default (normal)"
+    echo "Warning: Invalid rotation value '\${ROTATION}', using default (normal)"
     ROTATION=0
     TRANSFORM="normal"
     ;;
 esac
 
 # Generate kanshi config
-mkdir -p "$(dirname "${KANSHI_CONFIG}")"
-cat > "${KANSHI_CONFIG}" <<KANSHI
+mkdir -p "\$(dirname "\${KANSHI_CONFIG}")"
+cat > "\${KANSHI_CONFIG}" <<KANSHI
 profile kiosk {
-	output HDMI-A-1 enable transform ${TRANSFORM}
+	output HDMI-A-1 enable transform \${TRANSFORM}
 }
 KANSHI
 
-chown "${TARGET_USER}:${TARGET_USER}" "${KANSHI_CONFIG}"
+chown "\${TARGET_USER}:\${TARGET_USER}" "\${KANSHI_CONFIG}"
 
-echo "Display rotation set to ${ROTATION}° (transform: ${TRANSFORM})"
+echo "Display rotation set to \${ROTATION}° (transform: \${TRANSFORM})"
 
 # Reload kanshi if it's running
 if pgrep -x kanshi > /dev/null; then
@@ -388,8 +386,76 @@ HELPER
 
 chmod +x "${KANSHI_HELPER}"
 
-# Run helper to create initial config
+# Create touch/mouse emulation helper script
+cat > "${LABWC_TOUCH_HELPER}" <<HELPER
+#!/usr/bin/env bash
+set -euo pipefail
+
+TARGET_USER="\${1:-lucid}"
+TARGET_HOME=\$(eval echo "~\${TARGET_USER}")
+LABWC_CONFIG_DIR="\${TARGET_HOME}/.config/labwc"
+RC_XML="\${LABWC_CONFIG_DIR}/rc.xml"
+USB_CONFIG="${USB_KIOSK_CONFIG}"
+
+# Default mouse emulation (yes)
+MOUSE_EMULATION="yes"
+
+# Read mouse emulation from USB config if it exists
+if [ -f "\${USB_CONFIG}" ]; then
+  # Source the config file safely
+  if grep -q "^MOUSE_EMULATION=" "\${USB_CONFIG}"; then
+    MOUSE_EMULATION=\$(grep "^MOUSE_EMULATION=" "\${USB_CONFIG}" | head -n1 | cut -d'=' -f2 | tr -d ' "'"'"'')
+  fi
+fi
+
+# Validate mouse emulation value (yes or no)
+case "\${MOUSE_EMULATION}" in
+  yes|no)
+    # Valid value
+    ;;
+  *)
+    echo "Warning: Invalid MOUSE_EMULATION value '\${MOUSE_EMULATION}', using default (yes)"
+    MOUSE_EMULATION="yes"
+    ;;
+esac
+
+# Ensure rc.xml exists
+if [ ! -f "\${RC_XML}" ]; then
+  mkdir -p "\${LABWC_CONFIG_DIR}"
+  cat > "\${RC_XML}" <<'XML'
+<?xml version="1.0"?>
+<openbox_config xmlns="http://openbox.org/3.4/rc">
+</openbox_config>
+XML
+fi
+
+# Remove existing touch configuration if present
+sed -i '/<touch/d' "\${RC_XML}" || true
+sed -i '/<\/touch>/d' "\${RC_XML}" || true
+
+# Add touch configuration before closing </openbox_config>
+awk -v mouse_emulation="\${MOUSE_EMULATION}" '
+  /<\/openbox_config>/ {
+    print "  <touch mapToOutput=\"HDMI-A-1\" mouseEmulation=\"" mouse_emulation "\"/>"
+  }
+  { print }
+' "\${RC_XML}" > "\${RC_XML}.tmp" && mv "\${RC_XML}.tmp" "\${RC_XML}"
+
+chown "\${TARGET_USER}:\${TARGET_USER}" "\${RC_XML}"
+
+echo "Touch mouse emulation set to \${MOUSE_EMULATION}"
+
+# Reload labwc if it's running
+if pgrep -x labwc > /dev/null; then
+  pkill -HUP labwc || true
+fi
+HELPER
+
+chmod +x "${LABWC_TOUCH_HELPER}"
+
+# Run helpers to create initial configs
 "${KANSHI_HELPER}" "${TARGET_USER}"
+"${LABWC_TOUCH_HELPER}" "${TARGET_USER}"
 
 # ========================================
 # [11/11] Configure Boot Splash Screen
@@ -479,7 +545,8 @@ echo "  • Custom boot splash screen"
 echo ""
 echo "USB Configuration:"
 echo "  Create ${USB_KIOSK_CONFIG} with:"
-echo "    ROTATION=90    (0, 90, 180, 270)"
+echo "    ROTATION=90         (0, 90, 180, 270)"
+echo "    MOUSE_EMULATION=yes (yes, no, default: yes)"
 echo ""
 echo "Next Steps:"
 echo "  1. Reboot or restart Wayland"
